@@ -6,6 +6,68 @@ namespace st7789v {
 
 static const char *const TAG = "st7789v";
 static const size_t TEMP_BUFFER_SIZE = 128;
+static const size_t WIDTH = 240;
+static const size_t HEIGHT = 240;
+static const size_t NUM_COLORS = 8;
+
+static int8_t displayBuffer[(WIDTH * HEIGHT * 3) / 8];
+
+static Color colors[NUM_COLORS] = {
+    Color(0, 0, 0),       // Black
+    Color(255, 255, 255), // White
+    Color(255, 0, 0),    // Red
+    Color(0, 255, 0),    // Green
+    Color(255, 255, 0),  // Yellow
+    Color(255, 165, 0),  // Orange
+    Color(0, 0, 0),       // Black
+    Color(0, 0, 0),       // Black
+};
+
+void ST7789V::setPixel(int x, int y, uint8_t colorIndex) {
+    if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && colorIndex < NUM_COLORS) {
+        int bitIndex = (y * WIDTH + x) * 3;
+        int byteIndex = bitIndex / 8;
+        int bitOffset = bitIndex % 8;
+
+        displayBuffer[byteIndex] &= ~(0x07 << bitOffset); // Clear the bits
+        displayBuffer[byteIndex] |= (colorIndex << bitOffset); // Set the bits
+
+        if (bitOffset > 5) {
+            displayBuffer[byteIndex + 1] &= ~(0x07 >> (8 - bitOffset)); // Clear the bits in the next byte
+            displayBuffer[byteIndex + 1] |= (colorIndex >> (8 - bitOffset)); // Set the bits in the next byte
+        }
+    }
+}
+
+Color ST7789V::getPixelColor(int x, int y) {
+    if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+        int bitIndex = (y * WIDTH + x) * 3;
+        int byteIndex = bitIndex / 8;
+        int bitOffset = bitIndex % 8;
+
+        uint8_t colorIndex = (displayBuffer[byteIndex] >> bitOffset) & 0x07;
+
+        if (bitOffset > 5) {
+            colorIndex |= (displayBuffer[byteIndex + 1] << (8 - bitOffset)) & 0x07;
+        }
+
+        return colors[colorIndex];
+    }
+    return Color(0, 0, 0); // Return black if out of bounds
+}
+
+int ST7789V::getColorIndex(const Color& color) {
+    for (int i = 0; i < NUM_COLORS; ++i) {
+        if (colors[i] == color) {
+            return i;
+        }
+    }
+    return 0; // Return 0 if the color is not found
+}
+
+void ST7789V::resetDisplayBuffer() {
+    memset(displayBuffer, 0, sizeof(displayBuffer));
+}
 
 void ST7789V::setup() {
   ESP_LOGCONFIG(TAG, "Setting up SPI ST7789V...");
@@ -15,11 +77,11 @@ void ST7789V::setup() {
 #endif
 
 #ifdef USE_ESP8266
-  if (this->get_buffer_length_() > (0.8*ESP.getFreeHeap()) ) {
+  // if (this->get_buffer_length_() > (0.8*ESP.getFreeHeap()) ) {
     ESP_LOGD(TAG,"Not enough Heap RAM, force no frame buffer mode, increase SPI rate");
     set_no_disp_buffer(true);
     this->set_data_rate(spi::DATA_RATE_40MHZ);
-  }  
+  // }  
 #endif
 
   this->spi_setup();
@@ -129,6 +191,7 @@ void ST7789V::setup() {
 
  if (this->no_disp_buffer_ ) {
     ESP_LOGD(TAG,"Skipping display buffer allocation");
+    this->resetDisplayBuffer();
   } else {
     ESP_LOGD(TAG,"Init display buffer allocation");
     this->init_internal_(this->get_buffer_length_());
@@ -164,6 +227,8 @@ void ST7789V::update() {
     // this->draw_filled_rect_(0, 0, this->get_width(), this->get_height(), 0X0000); 
     if (this->writer_local_.has_value())  // call lambda function if available
       (*this->writer_local_)(*this);
+    this->write_display_data();
+    this->resetDisplayBuffer();
   } else {
     this->clear();
     if (this->writer_local_.has_value())  // call lambda function if available
@@ -171,9 +236,6 @@ void ST7789V::update() {
     this->write_display_data(); 
   }
 }
-
-
-
 
 void ST7789V::set_model_str(const char *model_str) { this->model_str_ = model_str; }
 
@@ -184,7 +246,29 @@ void ST7789V::write_display_data() {
   uint16_t y2 = y1 + get_height_internal() - 1;
 
   if (this->no_disp_buffer_ ) {
-    return;
+this->enable();
+      for(int y = 5; y < HEIGHT - 5; y++) {
+        for(int x = 5; x < WIDTH - 5; x++) {
+          this->dc_pin_->digital_write(false);
+          this->write_byte(ST7789_CASET);  // set column(x) address
+          this->dc_pin_->digital_write(true);
+          this->write_addr_(x, x);
+          this->dc_pin_->digital_write(false);
+          this->write_byte(ST7789_RASET);  // set Page(y) address
+          this->dc_pin_->digital_write(true);
+          this->write_addr_(y, y);
+          this->dc_pin_->digital_write(false);
+          this->write_byte(ST7789_RAMWR);  // begin a write to memory
+          this->dc_pin_->digital_write(true);
+          auto color = this->getPixelColor(x, y);
+          auto color565 = display::ColorUtil::color_to_565(color);
+          this->write_byte((color565>>8)&0xff);
+          this->write_byte(color565&0xff);
+          
+        }
+      }
+      this->disable();
+      return;
   } 
   this->enable();
 
@@ -326,6 +410,9 @@ void HOT ST7789V::draw_absolute_pixel_internal(int x, int y, Color color) {
     return;
 
   if (this->no_disp_buffer_ ) {
+      this->setPixel(x, y, getColorIndex(color));
+      return;
+
       this->enable();
       this->dc_pin_->digital_write(false);
       this->write_byte(ST7789_CASET);  // set column(x) address

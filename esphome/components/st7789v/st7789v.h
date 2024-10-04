@@ -173,6 +173,11 @@ class ST7789V : public display::DisplayBuffer,
 
   const char *model_str_;
   optional<st7789_writer_t> writer_local_{};
+
+  void setPixel(int x, int y, uint8_t colorIndex);
+  Color getPixelColor(int x, int y);
+  int getColorIndex(const Color& color);
+  void resetDisplayBuffer();
 };
 
 }  // namespace st7789v
