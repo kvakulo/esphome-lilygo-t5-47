@@ -161,7 +161,7 @@ float ST7789V::get_setup_priority() const { return setup_priority::PROCESSOR; }
 
 void ST7789V::update() {
   if (this->no_disp_buffer_ ) {
-    this->draw_filled_rect_(0, 0, this->get_width(), this->get_height(), 0X0000); 
+    // this->draw_filled_rect_(0, 0, this->get_width(), this->get_height(), 0X0000); 
     if (this->writer_local_.has_value())  // call lambda function if available
       (*this->writer_local_)(*this);
   } else {
